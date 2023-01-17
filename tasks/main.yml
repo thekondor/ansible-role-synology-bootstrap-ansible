@@ -1,0 +1,70 @@
+---
+- name: "Check ansible user={{ ansible_user_name }} existence"
+  shell: "{{ user_cmd }} -enum local | grep '^{{ ansible_user_name }}$'"
+  register: user_check
+  ignore_errors: true
+  changed_when: false
+- set_fact:
+    ansible_user_not_exists: "{{ user_check.stdout | length == 0 and user_check.stderr | length == 0 }}"
+
+- name: "Add ansible user={{ ansible_user_name }}"
+  shell: |
+    {{ user_cmd }} --add "{{ ansible_user_name }}" "{{ ansible_user_password }}" "{{ ansible_user_desc }}" \
+    {{ ansible_user_expire_status }} "{{ ansible_user_email }}" {{ ansible_user_inprogress_privileges }}
+  when: ansible_user_not_exists
+  register: _out
+- set_fact:
+    ansible_user_created: "{{ _out.changed }}"
+
+### TODO: use `synouser --enum_admin`
+- name: "Check ansible user={{ ansible_user_name }} should be added to administrators={{ administrators_group_name }} group"
+  shell: |
+    {{ group_cmd }} -get {{ administrators_group_name }} | grep -z 'Group Members:.*\[{{ ansible_user_name }}\]'
+  changed_when: false
+  ignore_errors: true
+  register: _out
+- set_fact:
+    ansible_user_must_be_admin: "{{ ansible_user_created or _out.stdout | length == 0 }}"
+
+- name: "Add ansible user={{ ansible_user_name }} to administrators={{ administrators_group_name }} group"
+  when: ansible_user_must_be_admin
+  block:
+    - shell: "{{ group_cmd }} --memberadd {{ administrators_group_name }} {{ ansible_user_name }}"
+      register: ansible_user_became_administrator
+      ### On first memberadd call, it return '1' 🤷‍♂️; then zero.
+      ignore_errors: true
+      register: _cmd
+
+    - set_fact:
+        _failed: "{{ 'synoerr=' in _cmd.stderr }}"
+
+    - fail:
+        msg: "Failed to add {{ ansible_user_name }} to administrators={{ administrators_group_name }} group"
+      when: _failed
+
+- name: "Add authorized ssh key to ansible user={{ ansible_user_name }}"
+  authorized_key:
+    user: "{{ ansible_user_name }}"
+    key: '{{ item }}'
+    state: present
+    exclusive: True
+  with_file:
+    - "{{ ansible_user_public_key }}"
+
+- name: "Activate sudo for ansible user={{ ansible_user_name }}"
+  community.general.sudoers:
+    name: "{{ ansible_user_name }}-allow-all"
+    state: present
+    user: "{{ ansible_user_name }}"
+    commands: ALL
+    nopassword: false
+
+- name: "Enable ansible user={{ ansible_user_name }} account/login"
+  block:
+    - shell: "{{ user_cmd }} --get {{ ansible_user_name }} | grep ^Expired"
+      changed_when: false
+      register: _out
+
+    - shell: |
+        {{ user_cmd }} --modify {{ ansible_user_name }} "{{ ansible_user_desc }}" 0 "{{ ansible_user_email }}"
+      when: "'[true]' in _out.stdout"

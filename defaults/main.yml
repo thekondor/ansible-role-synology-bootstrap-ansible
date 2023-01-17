@@ -1,0 +1,10 @@
+user_cmd: "/usr/syno/sbin/synouser"
+group_cmd: "/usr/syno/sbin/synogroup"
+administrators_group_name: "administrators"
+
+ansible_user_name: ansible
+ansible_user_desc: "Ansible Automation"
+ansible_user_expire_status: 1
+ansible_user_email: ""
+### Until a new user is fully configured, it is created as deactivated account
+ansible_user_inprogress_privileges: 0
